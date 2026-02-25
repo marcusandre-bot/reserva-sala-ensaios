@@ -7,7 +7,7 @@ import pandas as pd
 import streamlit as st
 import portalocker
 
-st.title("Reserva da Sala de Ensaios")
+st.title("Paróquia Santa Teresinha- Reserva da Sala de Ensaios")
 
 ARQUIVO = "reservas.csv"
 COLUNAS = ["id", "data", "turno", "grupo", "pin_hash"]
@@ -185,3 +185,4 @@ else:
                     st.rerun()
                 else:
                     st.error("PIN incorreto. Só cancela com o PIN da reserva ou com o PIN do administrador.")
+
