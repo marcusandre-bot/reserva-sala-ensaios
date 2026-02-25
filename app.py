@@ -121,7 +121,7 @@ else:
 # -------------------------
 # Reservas futuras (visualização)
 # -------------------------
-st.subheader("Reservas futuras")
+st.subheader("Reservas REALIZADAS")
 
 df_view = carregar_reservas().copy()
 df_view["data_dt"] = pd.to_datetime(df_view["data"], errors="coerce")
@@ -185,4 +185,5 @@ else:
                     st.rerun()
                 else:
                     st.error("PIN incorreto. Só cancela com o PIN da reserva ou com o PIN do administrador.")
+
 
