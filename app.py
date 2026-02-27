@@ -81,22 +81,29 @@ COLUNAS = ["id", "data", "turno", "grupo", "pin_hash"]
 # GITHUB_BRANCH = "main"
 # GITHUB_FILE = "reservas.csv"
 # =========================================================
+# -------------------------
+# Persistência no GitHub (reservas.csv)
+# -------------------------
+from io import StringIO
+from typing import Optional, Tuple
+
 def github_config_ok() -> bool:
     return all(k in st.secrets for k in ["GITHUB_TOKEN", "GITHUB_REPO", "GITHUB_BRANCH", "GITHUB_FILE"])
 
-
-def _gh_headers() -> dict:
+def _gh_headers():
     return {
         "Authorization": f"token {st.secrets['GITHUB_TOKEN']}",
         "Accept": "application/vnd.github+json",
     }
 
-
-def github_get_file():
-    """Retorna (content_str, sha) do arquivo no GitHub. Se não existir, retorna ("", None)."""
-    repo = st.secrets["GITHUB_REPO"]
+def github_get_file() -> Tuple[str, Optional[str]]:
+    """
+    Retorna (content_str, sha) do arquivo no GitHub.
+    Se não existir, retorna ("", None).
+    """
+    repo = st.secrets["GITHUB_REPO"]          # ex: "marcusandre-bot/reserva-sala-ensaios"
     branch = st.secrets.get("GITHUB_BRANCH", "main")
-    path = st.secrets["GITHUB_FILE"]
+    path = st.secrets["GITHUB_FILE"]          # ex: "reservas.csv"
 
     url = f"https://api.github.com/repos/{repo}/contents/{path}?ref={branch}"
     r = requests.get(url, headers=_gh_headers(), timeout=20)
@@ -106,19 +113,24 @@ def github_get_file():
 
     r.raise_for_status()
     data = r.json()
-    content_b64 = data.get("content", "")
+
+    content_b64 = (data.get("content") or "").replace("\n", "")
     sha = data.get("sha")
+
     content = base64.b64decode(content_b64).decode("utf-8") if content_b64 else ""
     return content, sha
 
-
 def github_put_file(content_str: str, sha_atual: Optional[str]):
-    """Salva content_str no GitHub. Usa SHA para evitar sobrescrever mudanças de outra pessoa."""
+    """
+    Salva content_str no GitHub (mesmo path). Usa SHA para evitar sobrescrever mudanças.
+    Retorna (status_code, response_text) para debug.
+    """
     repo = st.secrets["GITHUB_REPO"]
     branch = st.secrets.get("GITHUB_BRANCH", "main")
     path = st.secrets["GITHUB_FILE"]
 
     url = f"https://api.github.com/repos/{repo}/contents/{path}"
+
     payload = {
         "message": "Atualiza reservas.csv",
         "content": base64.b64encode(content_str.encode("utf-8")).decode("utf-8"),
@@ -129,95 +141,76 @@ def github_put_file(content_str: str, sha_atual: Optional[str]):
 
     r = requests.put(url, headers=_gh_headers(), json=payload, timeout=20)
 
-    # 409/422 geralmente = conflito (alguém gravou antes).
+    # 409/422: conflito (alguém gravou antes) ou sha errado
     if r.status_code in (409, 422):
-        raise RuntimeError("CONFLITO_GITHUB")
+        raise RuntimeError(f"CONFLITO_GITHUB:{r.status_code}:{r.text}")
 
     r.raise_for_status()
-
-
-def _garantir_colunas(df: pd.DataFrame) -> pd.DataFrame:
-    for c in COLUNAS:
-        if c not in df.columns:
-            df[c] = ""
-    return df[COLUNAS]
-
+    return r.status_code, r.text
 
 def carregar_reservas() -> pd.DataFrame:
     """Carrega do GitHub (Cloud) ou do arquivo local (PC)."""
     if github_config_ok():
         content, _sha = github_get_file()
         if not content.strip():
-            return pd.DataFrame(columns=COLUNAS)
-        try:
-            df = pd.read_csv(StringIO(content), dtype=str)
-        except Exception:
             df = pd.DataFrame(columns=COLUNAS)
-        return _garantir_colunas(df)
+        else:
+            try:
+                df = pd.read_csv(StringIO(content), dtype=str)
+            except Exception:
+                df = pd.DataFrame(columns=COLUNAS)
+    else:
+        # --- modo local (secrets não configurado) ---
+        if not os.path.exists(ARQUIVO):
+            df0 = pd.DataFrame(columns=COLUNAS)
+            with portalocker.Lock(ARQUIVO, "w", timeout=5) as f:
+                df0.to_csv(f, index=False)
+            return df0
 
-    # ---- modo local (sem secrets do GitHub) ----
-    if not os.path.exists(ARQUIVO):
-        df0 = pd.DataFrame(columns=COLUNAS)
-        with portalocker.Lock(ARQUIVO, "w", timeout=5) as f:
-            df0.to_csv(f, index=False)
-        return df0
+        with portalocker.Lock(ARQUIVO, "r", timeout=5) as f:
+            try:
+                df = pd.read_csv(f, dtype=str)
+            except Exception:
+                df = pd.DataFrame(columns=COLUNAS)
 
-    with portalocker.Lock(ARQUIVO, "r", timeout=5) as f:
-        try:
-            df = pd.read_csv(f, dtype=str)
-        except Exception:
-            df = pd.DataFrame(columns=COLUNAS)
-
-    return _garantir_colunas(df)
-
+    # garante colunas
+    for c in COLUNAS:
+        if c not in df.columns:
+            df[c] = ""
+    return df[COLUNAS]
 
 def salvar_reservas(df: pd.DataFrame) -> None:
-    """Salva no GitHub (Cloud) ou no arquivo local (PC).
-    No GitHub, faz MESCLAGEM por id para evitar perder reservas em cliques simultâneos.
     """
-    df = _garantir_colunas(df)
-
+    Salva no GitHub (Cloud) ou no arquivo local (PC).
+    IMPORTANTE: valida se a escrita realmente refletiu no GitHub.
+    """
     if github_config_ok():
-        # pega o estado mais recente do GitHub
-        content_atual, sha = github_get_file()
-        if content_atual.strip():
-            try:
-                df_remoto = pd.read_csv(StringIO(content_atual), dtype=str)
-            except Exception:
-                df_remoto = pd.DataFrame(columns=COLUNAS)
-        else:
-            df_remoto = pd.DataFrame(columns=COLUNAS)
-
-        df_remoto = _garantir_colunas(df_remoto)
-
-        # Mescla: mantém remoto + local, sem duplicar id
-        df_merge = pd.concat([df_remoto, df], ignore_index=True).drop_duplicates(subset=["id"], keep="last")
-        csv_str = df_merge.to_csv(index=False)
-
         try:
+            # pega sha atual
+            _content_atual, sha = github_get_file()
+
+            # grava
+            csv_str = df.to_csv(index=False)
             github_put_file(csv_str, sha)
-        except RuntimeError as e:
-            if str(e) == "CONFLITO_GITHUB":
-                # tenta 1 vez recarregando e mesclando novamente
-                content2, sha2 = github_get_file()
-                if content2.strip():
-                    try:
-                        df2 = pd.read_csv(StringIO(content2), dtype=str)
-                    except Exception:
-                        df2 = pd.DataFrame(columns=COLUNAS)
-                else:
-                    df2 = pd.DataFrame(columns=COLUNAS)
 
-                df2 = _garantir_colunas(df2)
-                df_merge2 = pd.concat([df2, df], ignore_index=True).drop_duplicates(subset=["id"], keep="last")
-                github_put_file(df_merge2.to_csv(index=False), sha2)
-            else:
-                raise
-        return
+            # valida (recarrega e confere)
+            content_ok, _sha2 = github_get_file()
+            df_ok = pd.read_csv(StringIO(content_ok), dtype=str) if content_ok.strip() else pd.DataFrame(columns=COLUNAS)
 
-    # ---- modo local ----
-    with portalocker.Lock(ARQUIVO, "w", timeout=5) as f:
-        df.to_csv(f, index=False)
+            # se não bateu, avisa claramente
+            if len(df_ok) != len(df):
+                raise RuntimeError("GitHub gravou, mas o arquivo recarregado não conferiu (tamanho diferente).")
+
+        except Exception as e:
+            # Mostra o erro no app (pra você não ficar “no escuro”)
+            st.error(f"Falha ao salvar no GitHub: {e}")
+            raise
+    else:
+        with portalocker.Lock(ARQUIVO, "w", timeout=5) as f:
+            df.to_csv(f, index=False)
+
+# Indicador de modo (ajuda MUITO a diagnosticar)
+st.caption("Modo de dados: **Cloud (GitHub)**" if github_config_ok() else "Modo de dados: **Local**")
 
 
 # =========================================================
@@ -474,3 +467,4 @@ with tab_lista:
             use_container_width=True,
             hide_index=True,
         )
+
