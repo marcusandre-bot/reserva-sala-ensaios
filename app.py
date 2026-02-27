@@ -335,15 +335,22 @@ with tab_cal:
 
                     label = f"{dia} {emoji}\n{status_txt}"
                     key = f"dia_{ano}_{mes}_{dia}"
-                    
-                    if cols[i].button(label, key=key):
+
+                    # Desabilita datas passadas
+                    is_past = dt < hoje
+
+                    if cols[i].button(label, key=key, disabled=is_past):
                         st.session_state["data_sel"] = dt
                         st.rerun()
 # =========================================================
 # TAB 2 — RESERVAR
 # =========================================================
 with tab_reservar:
-    data = st.date_input("Escolha a data", st.session_state["data_sel"])
+   data = st.date_input(
+    "Escolha a data",
+    st.session_state["data_sel"],
+    min_value=hoje
+)
     st.session_state["data_sel"] = data
 
     df = carregar_reservas()
@@ -466,6 +473,7 @@ with tab_lista:
             use_container_width=True,
             hide_index=True,
         )
+
 
 
 
