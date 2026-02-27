@@ -1,4 +1,4 @@
-import os
+Zimport os
 import hashlib
 import uuid
 import calendar
@@ -251,8 +251,6 @@ hoje = date.today()
 if "data_sel" not in st.session_state:
     st.session_state["data_sel"] = hoje
 
-if "msg_sucesso" not in st.session_state:
-    st.session_state["msg_sucesso"] = False
 # =========================================================
 # Abas (Calendário / Reservar / Cancelar / Lista)
 # =========================================================
@@ -356,11 +354,7 @@ with tab_cal:
 # =========================================================
 
 with tab_reservar:
-    if st.session_state.get("msg_sucesso"):
-    st.success("RESERVA EFETUADA COM SUCESSO ✅")
-    st.info("Guarde seu PIN: ele será necessário para cancelar.")
-    st.session_state["msg_sucesso"] = False
-    data = st.date_input(
+     data = st.date_input(
     "Escolha a data",
     st.session_state["data_sel"],
     min_value=hoje
@@ -412,7 +406,8 @@ with tab_reservar:
                     df_novo = pd.concat([df_atual, nova], ignore_index=True)
                     salvar_reservas(df_novo)
 
-                    st.session_state["msg_sucesso"] = True
+                    st.success("Reserva realizada com sucesso! ✅")
+st.info("Guarde seu PIN: ele será necessário para cancelar.")
 st.rerun()
     else:
         st.warning("Todos os turnos dessa data já estão reservados.")
