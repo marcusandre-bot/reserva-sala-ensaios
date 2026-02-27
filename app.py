@@ -72,9 +72,6 @@ Reserva da Sala de Ensaios - Versão 1.1
     unsafe_allow_html=True,
 )
 
-ARQUIVO = "reservas.csv"
-COLUNAS = ["id", "data", "turno", "grupo", "pin_hash"]
-
 st.markdown("""
 <style>
 /* ===== Forçar calendário em grade no celular ===== */
@@ -103,6 +100,9 @@ st.markdown("""
 }
 </style>
 """, unsafe_allow_html=True)
+
+ARQUIVO = "reservas.csv"
+COLUNAS = ["id", "data", "turno", "grupo", "pin_hash"]
 # =========================================================
 # Persistência no GitHub (reservas.csv) — para não “zerar” na nuvem
 # Configure no Streamlit Cloud em Secrets:
@@ -508,6 +508,7 @@ with tab_lista:
             use_container_width=True,
             hide_index=True,
         )
+
 
 
 
