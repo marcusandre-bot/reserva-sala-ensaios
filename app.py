@@ -21,6 +21,13 @@ import requests
 # Config / Estilo
 # =========================================================
 st.set_page_config(page_title="Reserva Sala de Ensaios", layout="centered")
+st.markdown("""
+<style>
+:root {
+    color-scheme: dark;
+}
+</style>
+""", unsafe_allow_html=True)
 
 st.markdown(
     """
@@ -474,6 +481,7 @@ with tab_lista:
             use_container_width=True,
             hide_index=True,
         )
+
 
 
 
