@@ -75,7 +75,7 @@ Reserva da Sala de Ensaios - Versão 1.1
 st.markdown("""
 <style>
 /* ===== Forçar calendário em grade no celular ===== */
-@media (max-width: 480px) {
+@media (max-width: 600px) {
 
   /* Mantém blocos horizontais como grade (não empilha) */
   div[data-testid="stHorizontalBlock"] {
@@ -508,6 +508,7 @@ with tab_lista:
             use_container_width=True,
             hide_index=True,
         )
+
 
 
 
