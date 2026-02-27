@@ -75,7 +75,34 @@ Reserva da Sala de Ensaios - Versão 1.1
 ARQUIVO = "reservas.csv"
 COLUNAS = ["id", "data", "turno", "grupo", "pin_hash"]
 
+st.markdown("""
+<style>
+/* ===== Forçar calendário em grade no celular ===== */
+@media (max-width: 480px) {
 
+  /* Mantém blocos horizontais como grade (não empilha) */
+  div[data-testid="stHorizontalBlock"] {
+    flex-wrap: wrap !important;
+    gap: 0.15rem !important;
+  }
+
+  /* Cada "coluna" vira um bloco pequeno (7 por linha aprox.) */
+  div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+    flex: 1 0 calc(14.285% - 0.2rem) !important;  /* ~1/7 */
+    min-width: calc(14.285% - 0.2rem) !important;
+  }
+
+  /* Botão ocupa toda a mini-coluna */
+  div[data-testid="stHorizontalBlock"] > div[data-testid="column"] .stButton > button {
+    width: 100% !important;
+    padding: 0.10rem 0.15rem !important;
+    font-size: 0.75rem !important;
+    line-height: 0.95rem !important;
+    white-space: normal !important;
+  }
+}
+</style>
+""", unsafe_allow_html=True)
 # =========================================================
 # Persistência no GitHub (reservas.csv) — para não “zerar” na nuvem
 # Configure no Streamlit Cloud em Secrets:
@@ -481,6 +508,7 @@ with tab_lista:
             use_container_width=True,
             hide_index=True,
         )
+
 
 
 
