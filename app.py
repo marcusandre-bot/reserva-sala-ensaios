@@ -251,7 +251,8 @@ hoje = date.today()
 if "data_sel" not in st.session_state:
     st.session_state["data_sel"] = hoje
 
-
+if "msg_sucesso" not in st.session_state:
+    st.session_state["msg_sucesso"] = False
 # =========================================================
 # Abas (Calendário / Reservar / Cancelar / Lista)
 # =========================================================
@@ -353,7 +354,12 @@ with tab_cal:
 # =========================================================
 # TAB 2 — RESERVAR
 # =========================================================
+
 with tab_reservar:
+    if st.session_state.get("msg_sucesso"):
+    st.success("RESERVA EFETUADA COM SUCESSO ✅")
+    st.info("Guarde seu PIN: ele será necessário para cancelar.")
+    st.session_state["msg_sucesso"] = False
     data = st.date_input(
     "Escolha a data",
     st.session_state["data_sel"],
@@ -406,9 +412,8 @@ with tab_reservar:
                     df_novo = pd.concat([df_atual, nova], ignore_index=True)
                     salvar_reservas(df_novo)
 
-                    st.success("Reserva realizada com sucesso! ✅")
-                    st.info("Guarde seu PIN: ele será necessário para cancelar.")
-                    st.rerun()
+                    st.session_state["msg_sucesso"] = True
+st.rerun()
     else:
         st.warning("Todos os turnos dessa data já estão reservados.")
 
@@ -480,6 +485,7 @@ with tab_lista:
             use_container_width=True,
             hide_index=True,
         )
+
 
 
 
