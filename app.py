@@ -333,7 +333,7 @@ with tab_cal:
                         emoji = "🟥"
                     status_txt = f"{occ}/{tot}"
 
-                label = f"{dia} {emoji}\n{status_txt}"
+label = f"{dia} {emoji}\n{status_txt}"
 key = f"dia_{ano}_{mes}_{dia}"
 
 if cols[i].button(label, key=key):
@@ -466,6 +466,7 @@ with tab_lista:
             use_container_width=True,
             hide_index=True,
         )
+
 
 
 
