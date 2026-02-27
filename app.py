@@ -3,19 +3,27 @@ import hashlib
 import uuid
 import calendar
 from datetime import date
+from io import StringIO
+from typing import Optional
 
 import pandas as pd
 import streamlit as st
+
+# (Somente no modo local)
 import portalocker
 
+# (Somente no modo Cloud/GitHub)
 import base64
 import requests
-# -------------------------
+
+
+# =========================================================
 # Config / Estilo
-# -------------------------
+# =========================================================
 st.set_page_config(page_title="Reserva Sala de Ensaios", layout="centered")
 
-st.markdown("""
+st.markdown(
+    """
 <style>
 /* Sobe um pouco o conteúdo sem sumir o cabeçalho */
 .block-container {
@@ -41,31 +49,48 @@ div[data-testid="column"] .stButton {
     margin: 0.15rem 0;
 }
 </style>
-""", unsafe_allow_html=True)
-st.markdown("""
+""",
+    unsafe_allow_html=True,
+)
+
+st.markdown(
+    """
 <div style='text-align:center; font-size:22px; font-weight:600; margin-bottom: 0.6rem;'>
 Paróquia Santa Teresinha<br>
 <span style='font-size:16px; font-weight:400;'>
 Reserva da Sala de Ensaios - Versão 1.1
 </span>
 </div>
-""", unsafe_allow_html=True)
-
+""",
+    unsafe_allow_html=True,
+)
 
 ARQUIVO = "reservas.csv"
 COLUNAS = ["id", "data", "turno", "grupo", "pin_hash"]
 
-# -------------------------
-# Persistência no GitHub (reservas.csv)
-# -------------------------
+
+# =========================================================
+# Persistência no GitHub (reservas.csv) — para não “zerar” na nuvem
+# Configure no Streamlit Cloud em Secrets:
+# ADMIN_PIN, GITHUB_TOKEN, GITHUB_REPO, GITHUB_BRANCH, GITHUB_FILE
+#
+# Exemplo:
+# ADMIN_PIN = "1234"
+# GITHUB_TOKEN = "ghp_...."
+# GITHUB_REPO = "marcusandre-bot/reserva-sala-ensaios"
+# GITHUB_BRANCH = "main"
+# GITHUB_FILE = "reservas.csv"
+# =========================================================
 def github_config_ok() -> bool:
     return all(k in st.secrets for k in ["GITHUB_TOKEN", "GITHUB_REPO", "GITHUB_BRANCH", "GITHUB_FILE"])
 
-def _gh_headers():
+
+def _gh_headers() -> dict:
     return {
         "Authorization": f"token {st.secrets['GITHUB_TOKEN']}",
         "Accept": "application/vnd.github+json",
     }
+
 
 def github_get_file():
     """Retorna (content_str, sha) do arquivo no GitHub. Se não existir, retorna ("", None)."""
@@ -86,7 +111,8 @@ def github_get_file():
     content = base64.b64decode(content_b64).decode("utf-8") if content_b64 else ""
     return content, sha
 
-def github_put_file(content_str: str, sha_atual: str | None):
+
+def github_put_file(content_str: str, sha_atual: Optional[str]):
     """Salva content_str no GitHub. Usa SHA para evitar sobrescrever mudanças de outra pessoa."""
     repo = st.secrets["GITHUB_REPO"]
     branch = st.secrets.get("GITHUB_BRANCH", "main")
@@ -103,11 +129,19 @@ def github_put_file(content_str: str, sha_atual: str | None):
 
     r = requests.put(url, headers=_gh_headers(), json=payload, timeout=20)
 
-    # 409/422 geralmente = conflito (alguém gravou antes). Nesse caso, você recarrega e tenta de novo.
+    # 409/422 geralmente = conflito (alguém gravou antes).
     if r.status_code in (409, 422):
         raise RuntimeError("CONFLITO_GITHUB")
 
     r.raise_for_status()
+
+
+def _garantir_colunas(df: pd.DataFrame) -> pd.DataFrame:
+    for c in COLUNAS:
+        if c not in df.columns:
+            df[c] = ""
+    return df[COLUNAS]
+
 
 def carregar_reservas() -> pd.DataFrame:
     """Carrega do GitHub (Cloud) ou do arquivo local (PC)."""
@@ -115,82 +149,82 @@ def carregar_reservas() -> pd.DataFrame:
         content, _sha = github_get_file()
         if not content.strip():
             return pd.DataFrame(columns=COLUNAS)
-
-        from io import StringIO
         try:
             df = pd.read_csv(StringIO(content), dtype=str)
         except Exception:
             df = pd.DataFrame(columns=COLUNAS)
+        return _garantir_colunas(df)
 
-    else:
-        # --- modo local (secrets não configurado) ---
-        if not os.path.exists(ARQUIVO):
-            df0 = pd.DataFrame(columns=COLUNAS)
-            with portalocker.Lock(ARQUIVO, "w", timeout=5) as f:
-                df0.to_csv(f, index=False)
-            return df0
+    # ---- modo local (sem secrets do GitHub) ----
+    if not os.path.exists(ARQUIVO):
+        df0 = pd.DataFrame(columns=COLUNAS)
+        with portalocker.Lock(ARQUIVO, "w", timeout=5) as f:
+            df0.to_csv(f, index=False)
+        return df0
 
-        with portalocker.Lock(ARQUIVO, "r", timeout=5) as f:
-            try:
-                df = pd.read_csv(f, dtype=str)
-            except Exception:
-                df = pd.DataFrame(columns=COLUNAS)
+    with portalocker.Lock(ARQUIVO, "r", timeout=5) as f:
+        try:
+            df = pd.read_csv(f, dtype=str)
+        except Exception:
+            df = pd.DataFrame(columns=COLUNAS)
 
-    # garante colunas
-    for c in COLUNAS:
-        if c not in df.columns:
-            df[c] = ""
-    return df[COLUNAS]
+    return _garantir_colunas(df)
+
 
 def salvar_reservas(df: pd.DataFrame) -> None:
-    """Salva no GitHub (Cloud) ou no arquivo local (PC)."""
+    """Salva no GitHub (Cloud) ou no arquivo local (PC).
+    No GitHub, faz MESCLAGEM por id para evitar perder reservas em cliques simultâneos.
+    """
+    df = _garantir_colunas(df)
+
     if github_config_ok():
-        # tenta gravar com proteção de conflito
+        # pega o estado mais recente do GitHub
         content_atual, sha = github_get_file()
-        csv_str = df.to_csv(index=False)
+        if content_atual.strip():
+            try:
+                df_remoto = pd.read_csv(StringIO(content_atual), dtype=str)
+            except Exception:
+                df_remoto = pd.DataFrame(columns=COLUNAS)
+        else:
+            df_remoto = pd.DataFrame(columns=COLUNAS)
+
+        df_remoto = _garantir_colunas(df_remoto)
+
+        # Mescla: mantém remoto + local, sem duplicar id
+        df_merge = pd.concat([df_remoto, df], ignore_index=True).drop_duplicates(subset=["id"], keep="last")
+        csv_str = df_merge.to_csv(index=False)
 
         try:
             github_put_file(csv_str, sha)
         except RuntimeError as e:
             if str(e) == "CONFLITO_GITHUB":
-                # recarrega e tenta 1 vez de novo (resolve a maioria dos casos)
-                _content2, sha2 = github_get_file()
-                github_put_file(csv_str, sha2)
+                # tenta 1 vez recarregando e mesclando novamente
+                content2, sha2 = github_get_file()
+                if content2.strip():
+                    try:
+                        df2 = pd.read_csv(StringIO(content2), dtype=str)
+                    except Exception:
+                        df2 = pd.DataFrame(columns=COLUNAS)
+                else:
+                    df2 = pd.DataFrame(columns=COLUNAS)
+
+                df2 = _garantir_colunas(df2)
+                df_merge2 = pd.concat([df2, df], ignore_index=True).drop_duplicates(subset=["id"], keep="last")
+                github_put_file(df_merge2.to_csv(index=False), sha2)
             else:
                 raise
-    else:
-        with portalocker.Lock(ARQUIVO, "w", timeout=5) as f:
-            df.to_csv(f, index=False)
-# -------------------------
+        return
+
+    # ---- modo local ----
+    with portalocker.Lock(ARQUIVO, "w", timeout=5) as f:
+        df.to_csv(f, index=False)
+
+
+# =========================================================
 # Funções auxiliares
-# -------------------------
+# =========================================================
 def hash_pin(pin: str) -> str:
     return hashlib.sha256(pin.encode("utf-8")).hexdigest()
-
-
-#def carregar_reservas() -> pd.DataFrame:
-    #if not os.path.exists(ARQUIVO):
-        #df0 = pd.DataFrame(columns=COLUNAS)
-        #with portalocker.Lock(ARQUIVO, "w", timeout=5) as f:
-            #df0.to_csv(f, index=False)
-        #return df0
-
-    #with portalocker.Lock(ARQUIVO, "r", timeout=5) as f:
-        #try:
-           # df = pd.read_csv(f, dtype=str)
-       # except Exception:
-        #    df = pd.DataFrame(columns=COLUNAS)
-
-   # for c in COLUNAS:
-     #   if c not in df.columns:
-      #      df[c] = ""
-
-   # return df[COLUNAS]
-
-
-#def salvar_reservas(df: pd.DataFrame) -> None:
-   # with portalocker.Lock(ARQUIVO, "w", timeout=5) as f:
-   #     df.to_csv(f, index=False)
 
 
 def turnos_por_data(d: date):
@@ -209,20 +243,17 @@ def norm_data(d: date) -> str:
     return d.strftime("%Y-%m-%d")
 
 
-# -------------------------
+# =========================================================
 # Estado: data selecionada
-# -------------------------
+# =========================================================
 hoje = date.today()
 if "data_sel" not in st.session_state:
     st.session_state["data_sel"] = hoje
 
 
-# -------------------------
-# Abas (Opção A)
-# -------------------------
-# -------------------------
+# =========================================================
 # Abas (Calendário / Reservar / Cancelar / Lista)
-# -------------------------
+# =========================================================
 tab_cal, tab_reservar, tab_cancelar, tab_lista = st.tabs(
     ["📅 Calendário", "✅ Reservar", "❌ Cancelar", "📋 Reservas realizadas"]
 )
@@ -244,8 +275,6 @@ with tab_cal:
         st.info(f"Data selecionada: **{st.session_state['data_sel'].strftime('%d/%m/%Y')}**")
 
     with col_cal:
-        #st.markdown("#### Calendário do mês")
-
         colA, colB = st.columns([1, 2])
         with colA:
             ano = st.number_input(
@@ -318,7 +347,6 @@ with tab_cal:
                     st.session_state["data_sel"] = dt
                     st.rerun()
 
-
 # =========================================================
 # TAB 2 — RESERVAR
 # =========================================================
@@ -350,19 +378,24 @@ with tab_reservar:
             elif not pin.strip():
                 st.error("Crie um PIN para esta reserva.")
             else:
+                # recarrega na hora do clique
                 df_atual = carregar_reservas()
                 ja_existe = ((df_atual["data"] == str(data)) & (df_atual["turno"] == turno_escolhido)).any()
 
                 if ja_existe:
                     st.warning("Esse turno já foi reservado por outra pessoa. Atualize a página e escolha outro.")
                 else:
-                    nova = pd.DataFrame([{
-                        "id": str(uuid.uuid4())[:8],
-                        "data": str(data),
-                        "turno": turno_escolhido,
-                        "grupo": nome_grupo.strip(),
-                        "pin_hash": hash_pin(pin.strip()),
-                    }])
+                    nova = pd.DataFrame(
+                        [
+                            {
+                                "id": str(uuid.uuid4())[:8],
+                                "data": str(data),
+                                "turno": turno_escolhido,
+                                "grupo": nome_grupo.strip(),
+                                "pin_hash": hash_pin(pin.strip()),
+                            }
+                        ]
+                    )
 
                     df_novo = pd.concat([df_atual, nova], ignore_index=True)
                     salvar_reservas(df_novo)
@@ -372,7 +405,6 @@ with tab_reservar:
                     st.rerun()
     else:
         st.warning("Todos os turnos dessa data já estão reservados.")
-
 
 # =========================================================
 # TAB 3 — CANCELAR
@@ -390,13 +422,13 @@ with tab_cancelar:
     else:
         df_cancel["label"] = df_cancel.apply(
             lambda r: f'{r["data"]} | {r["turno"]} | {r["grupo"]} | id={r["id"]}',
-            axis=1
+            axis=1,
         )
         escolha = st.selectbox("Selecione a reserva", df_cancel["label"].tolist())
 
         pin_cancel = st.text_input(
             "Digite o PIN para cancelar (PIN da reserva ou PIN do administrador)",
-            type="password"
+            type="password",
         )
 
         if st.button("Cancelar reserva selecionada"):
@@ -411,7 +443,7 @@ with tab_cancelar:
                 if linha.empty:
                     st.warning("Essa reserva não foi encontrada (talvez alguém já cancelou). Atualize a página.")
                 else:
-                    pin_ok = (hash_pin(pin_cancel.strip()) == linha.iloc[0]["pin_hash"])
+                    pin_ok = hash_pin(pin_cancel.strip()) == linha.iloc[0]["pin_hash"]
                     admin_ok = admin_pin_ok(pin_cancel.strip())
 
                     if pin_ok or admin_ok:
@@ -421,7 +453,6 @@ with tab_cancelar:
                         st.rerun()
                     else:
                         st.error("PIN incorreto. Só cancela com o PIN da reserva ou com o PIN do administrador.")
-
 
 # =========================================================
 # TAB 4 — LISTA
@@ -441,6 +472,5 @@ with tab_lista:
         st.dataframe(
             reservas_futuras[["data", "turno", "grupo", "id"]],
             use_container_width=True,
-            hide_index=True
+            hide_index=True,
         )
-
