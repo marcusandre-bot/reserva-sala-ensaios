@@ -8,7 +8,8 @@ import pandas as pd
 import streamlit as st
 import portalocker
 
-
+import base64
+import requests
 # -------------------------
 # Config / Estilo
 # -------------------------
@@ -54,7 +55,112 @@ Reserva da Sala de Ensaios - Versão 1.1
 ARQUIVO = "reservas.csv"
 COLUNAS = ["id", "data", "turno", "grupo", "pin_hash"]
 
+# -------------------------
+# Persistência no GitHub (reservas.csv)
+# -------------------------
+def github_config_ok() -> bool:
+    return all(k in st.secrets for k in ["GITHUB_TOKEN", "GITHUB_REPO", "GITHUB_BRANCH", "GITHUB_FILE"])
 
+def _gh_headers():
+    return {
+        "Authorization": f"token {st.secrets['GITHUB_TOKEN']}",
+        "Accept": "application/vnd.github+json",
+    }
+
+def github_get_file():
+    """Retorna (content_str, sha) do arquivo no GitHub. Se não existir, retorna ("", None)."""
+    repo = st.secrets["GITHUB_REPO"]
+    branch = st.secrets.get("GITHUB_BRANCH", "main")
+    path = st.secrets["GITHUB_FILE"]
+
+    url = f"https://api.github.com/repos/{repo}/contents/{path}?ref={branch}"
+    r = requests.get(url, headers=_gh_headers(), timeout=20)
+
+    if r.status_code == 404:
+        return "", None
+
+    r.raise_for_status()
+    data = r.json()
+    content_b64 = data.get("content", "")
+    sha = data.get("sha")
+    content = base64.b64decode(content_b64).decode("utf-8") if content_b64 else ""
+    return content, sha
+
+def github_put_file(content_str: str, sha_atual: str | None):
+    """Salva content_str no GitHub. Usa SHA para evitar sobrescrever mudanças de outra pessoa."""
+    repo = st.secrets["GITHUB_REPO"]
+    branch = st.secrets.get("GITHUB_BRANCH", "main")
+    path = st.secrets["GITHUB_FILE"]
+
+    url = f"https://api.github.com/repos/{repo}/contents/{path}"
+    payload = {
+        "message": "Atualiza reservas.csv",
+        "content": base64.b64encode(content_str.encode("utf-8")).decode("utf-8"),
+        "branch": branch,
+    }
+    if sha_atual:
+        payload["sha"] = sha_atual
+
+    r = requests.put(url, headers=_gh_headers(), json=payload, timeout=20)
+
+    # 409/422 geralmente = conflito (alguém gravou antes). Nesse caso, você recarrega e tenta de novo.
+    if r.status_code in (409, 422):
+        raise RuntimeError("CONFLITO_GITHUB")
+
+    r.raise_for_status()
+
+def carregar_reservas() -> pd.DataFrame:
+    """Carrega do GitHub (Cloud) ou do arquivo local (PC)."""
+    if github_config_ok():
+        content, _sha = github_get_file()
+        if not content.strip():
+            return pd.DataFrame(columns=COLUNAS)
+
+        from io import StringIO
+        try:
+            df = pd.read_csv(StringIO(content), dtype=str)
+        except Exception:
+            df = pd.DataFrame(columns=COLUNAS)
+
+    else:
+        # --- modo local (secrets não configurado) ---
+        if not os.path.exists(ARQUIVO):
+            df0 = pd.DataFrame(columns=COLUNAS)
+            with portalocker.Lock(ARQUIVO, "w", timeout=5) as f:
+                df0.to_csv(f, index=False)
+            return df0
+
+        with portalocker.Lock(ARQUIVO, "r", timeout=5) as f:
+            try:
+                df = pd.read_csv(f, dtype=str)
+            except Exception:
+                df = pd.DataFrame(columns=COLUNAS)
+
+    # garante colunas
+    for c in COLUNAS:
+        if c not in df.columns:
+            df[c] = ""
+    return df[COLUNAS]
+
+def salvar_reservas(df: pd.DataFrame) -> None:
+    """Salva no GitHub (Cloud) ou no arquivo local (PC)."""
+    if github_config_ok():
+        # tenta gravar com proteção de conflito
+        content_atual, sha = github_get_file()
+        csv_str = df.to_csv(index=False)
+
+        try:
+            github_put_file(csv_str, sha)
+        except RuntimeError as e:
+            if str(e) == "CONFLITO_GITHUB":
+                # recarrega e tenta 1 vez de novo (resolve a maioria dos casos)
+                _content2, sha2 = github_get_file()
+                github_put_file(csv_str, sha2)
+            else:
+                raise
+    else:
+        with portalocker.Lock(ARQUIVO, "w", timeout=5) as f:
+            df.to_csv(f, index=False)
 # -------------------------
 # Funções auxiliares
 # -------------------------
@@ -62,29 +168,29 @@ def hash_pin(pin: str) -> str:
     return hashlib.sha256(pin.encode("utf-8")).hexdigest()
 
 
-def carregar_reservas() -> pd.DataFrame:
-    if not os.path.exists(ARQUIVO):
-        df0 = pd.DataFrame(columns=COLUNAS)
-        with portalocker.Lock(ARQUIVO, "w", timeout=5) as f:
-            df0.to_csv(f, index=False)
-        return df0
+#def carregar_reservas() -> pd.DataFrame:
+    #if not os.path.exists(ARQUIVO):
+        #df0 = pd.DataFrame(columns=COLUNAS)
+        #with portalocker.Lock(ARQUIVO, "w", timeout=5) as f:
+            #df0.to_csv(f, index=False)
+        #return df0
 
-    with portalocker.Lock(ARQUIVO, "r", timeout=5) as f:
-        try:
-            df = pd.read_csv(f, dtype=str)
-        except Exception:
-            df = pd.DataFrame(columns=COLUNAS)
+    #with portalocker.Lock(ARQUIVO, "r", timeout=5) as f:
+        #try:
+           # df = pd.read_csv(f, dtype=str)
+       # except Exception:
+        #    df = pd.DataFrame(columns=COLUNAS)
 
-    for c in COLUNAS:
-        if c not in df.columns:
-            df[c] = ""
+   # for c in COLUNAS:
+     #   if c not in df.columns:
+      #      df[c] = ""
 
-    return df[COLUNAS]
+   # return df[COLUNAS]
 
 
-def salvar_reservas(df: pd.DataFrame) -> None:
-    with portalocker.Lock(ARQUIVO, "w", timeout=5) as f:
-        df.to_csv(f, index=False)
+#def salvar_reservas(df: pd.DataFrame) -> None:
+   # with portalocker.Lock(ARQUIVO, "w", timeout=5) as f:
+   #     df.to_csv(f, index=False)
 
 
 def turnos_por_data(d: date):
@@ -337,3 +443,4 @@ with tab_lista:
             use_container_width=True,
             hide_index=True
         )
+
