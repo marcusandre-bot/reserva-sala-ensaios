@@ -16,6 +16,8 @@ import portalocker
 import base64
 import requests
 
+#IMPORT NECESSÁRIO PARA FUNÇÃO SALVAR RESERVA
+import time
 
 # =========================================================
 # Config / Estilo
@@ -213,10 +215,11 @@ def carregar_reservas() -> pd.DataFrame:
             df[c] = ""
     return df[COLUNAS]
 
+#FUNÇÃO SALVAR RESERVAS NOVA
 def salvar_reservas(df: pd.DataFrame) -> None:
     """
     Salva no GitHub (Cloud) ou no arquivo local (PC).
-    IMPORTANTE: valida se a escrita realmente refletiu no GitHub.
+    Evita erro falso por atraso/cache do GitHub logo após o PUT.
     """
     if github_config_ok():
         try:
@@ -227,21 +230,67 @@ def salvar_reservas(df: pd.DataFrame) -> None:
             csv_str = df.to_csv(index=False)
             github_put_file(csv_str, sha)
 
-            # valida (recarrega e confere)
-            content_ok, _sha2 = github_get_file()
-            df_ok = pd.read_csv(StringIO(content_ok), dtype=str) if content_ok.strip() else pd.DataFrame(columns=COLUNAS)
+            # valida com 3 tentativas curtas (sem quebrar o app)
+            ok = False
+            for _ in range(3):
+                time.sleep(0.4)
+                content_ok, _sha2 = github_get_file()
 
-            # se não bateu, avisa claramente
-            if len(df_ok) != len(df):
-                raise RuntimeError("GitHub gravou, mas o arquivo recarregado não conferiu (tamanho diferente).")
+                if not (content_ok or "").strip():
+                    df_ok = pd.DataFrame(columns=COLUNAS)
+                else:
+                    try:
+                        df_ok = pd.read_csv(StringIO(content_ok), dtype=str)
+                    except Exception:
+                        df_ok = pd.DataFrame(columns=COLUNAS)
+
+                if len(df_ok) == len(df):
+                    ok = True
+                    break
+
+            if not ok:
+                st.warning(
+                    "Reserva/cancelamento foi salvo, mas a leitura imediata ainda não refletiu. "
+                    "Se necessário, atualize a página (F5)."
+                )
 
         except Exception as e:
-            # Mostra o erro no app (pra você não ficar “no escuro”)
             st.error(f"Falha ao salvar no GitHub: {e}")
             raise
     else:
         with portalocker.Lock(ARQUIVO, "w", timeout=5) as f:
             df.to_csv(f, index=False)
+            
+#FUNÇÃO SALVAR RESERVA ANTIGA (INATIVA)
+#def salvar_reservas(df: pd.DataFrame) -> None:
+ #   """
+   # Salva no GitHub (Cloud) ou no arquivo local (PC).
+ #   IMPORTANTE: valida se a escrita realmente refletiu no GitHub.
+#    """
+#    if github_config_ok():
+  #      try:
+      #      # pega sha atual
+        #    _content_atual, sha = github_get_file()
+
+      #      # grava
+      #     csv_str = df.to_csv(index=False)
+      #      github_put_file(csv_str, sha)
+#
+      #      # valida (recarrega e confere)
+      #      content_ok, _sha2 = github_get_file()
+          #  df_ok = pd.read_csv(StringIO(content_ok), dtype=str) if content_ok.strip() else pd.DataFrame(columns=COLUNAS)
+
+         #   # se não bateu, avisa claramente
+        #    if len(df_ok) != len(df):
+       #         raise RuntimeError("GitHub gravou, mas o arquivo recarregado não conferiu (tamanho diferente).")
+
+       # except Exception as e:
+     #       # Mostra o erro no app (pra você não ficar “no escuro”)
+   #         st.error(f"Falha ao salvar no GitHub: {e}")
+    #        raise
+   # else:
+    #   with portalocker.Lock(ARQUIVO, "w", timeout=5) as f:
+   #         df.to_csv(f, index=False)
 
 # Indicador de modo (ajuda MUITO a diagnosticar)
 st.caption("Modo de dados: **Cloud (GitHub)**" if github_config_ok() else "Modo de dados: **Local**")
@@ -508,6 +557,7 @@ with tab_lista:
             use_container_width=True,
             hide_index=True,
         )
+
 
 
 
