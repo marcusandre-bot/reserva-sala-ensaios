@@ -131,30 +131,64 @@ def _gh_headers():
         "Authorization": f"token {st.secrets['GITHUB_TOKEN']}",
         "Accept": "application/vnd.github+json",
     }
+    
+# GITHUB ANTIGO (BACKUP CASO DÊ ERRO NO NOVO)
+#def github_get_file() -> Tuple[str, Optional[str]]:
+    #"""
+   # Retorna (content_str, sha) do arquivo no GitHub.
+   # Se não existir, retorna ("", None).
+ #   """
+#    repo = st.secrets["GITHUB_REPO"]          # ex: "marcusandre-bot/reserva-sala-ensaios"
+#    branch = st.secrets.get("GITHUB_BRANCH", "main")
+#    path = st.secrets["GITHUB_FILE"]          # ex: "reservas.csv"
+#
+ #   url = f"https://api.github.com/repos/{repo}/contents/{path}?ref={branch}"
+ #   r = requests.get(url, headers=_gh_headers(), timeout=20)
+#
+  #  if r.status_code == 404:
+  #      return "", None
+#
+ #   r.raise_for_status()
+ #   data = r.json()
+#
+#    content_b64 = (data.get("content") or "").replace("\n", "")
+#    sha = data.get("sha")
+#
+#    content = base64.b64decode(content_b64).decode("utf-8") if content_b64 else ""
+  #  return content, sha
 
 def github_get_file() -> Tuple[str, Optional[str]]:
     """
     Retorna (content_str, sha) do arquivo no GitHub.
     Se não existir, retorna ("", None).
+    Se der erro temporário (rede/rate limit), não derruba o app.
     """
-    repo = st.secrets["GITHUB_REPO"]          # ex: "marcusandre-bot/reserva-sala-ensaios"
+    repo = st.secrets["GITHUB_REPO"]
     branch = st.secrets.get("GITHUB_BRANCH", "main")
-    path = st.secrets["GITHUB_FILE"]          # ex: "reservas.csv"
+    path = st.secrets["GITHUB_FILE"]
 
     url = f"https://api.github.com/repos/{repo}/contents/{path}?ref={branch}"
-    r = requests.get(url, headers=_gh_headers(), timeout=20)
 
-    if r.status_code == 404:
+    try:
+        r = requests.get(url, headers=_gh_headers(), timeout=20)
+
+        if r.status_code == 404:
+            return "", None
+
+        # Em caso de rate limit / instabilidade, não quebrar o app:
+        if r.status_code >= 400:
+            st.warning(f"GitHub temporariamente indisponível (HTTP {r.status_code}). Tente novamente em instantes.")
+            return "", None
+
+        data = r.json()
+        content_b64 = (data.get("content") or "").replace("\n", "")
+        sha = data.get("sha")
+        content = base64.b64decode(content_b64).decode("utf-8") if content_b64 else ""
+        return content, sha
+
+    except Exception as e:
+        st.warning(f"Falha temporária ao acessar o GitHub: {e}")
         return "", None
-
-    r.raise_for_status()
-    data = r.json()
-
-    content_b64 = (data.get("content") or "").replace("\n", "")
-    sha = data.get("sha")
-
-    content = base64.b64decode(content_b64).decode("utf-8") if content_b64 else ""
-    return content, sha
 
 def github_put_file(content_str: str, sha_atual: Optional[str]):
     """
@@ -557,6 +591,7 @@ with tab_lista:
             use_container_width=True,
             hide_index=True,
         )
+
 
 
 
