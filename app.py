@@ -46,11 +46,24 @@ h2 {
     margin-bottom: 0.3rem;
 }
 
-/* Botões um pouco menores (calendário fica mais discreto) */
+
+/* Botões do calendário */
 .stButton > button {
-    padding: 0.15rem 0.35rem;
-    font-size: 0.85rem;
-    line-height: 1.05rem;
+    width: 100% !important;
+    min-width: 0 !important;
+    min-height: 3rem !important;
+    padding: 0.15rem 0.20rem !important;
+    font-size: 0.85rem !important;
+    line-height: 1.05rem !important;
+}
+
+/* Impede o Streamlit de transformar o conteúdo em "..." */
+.stButton > button p {
+    white-space: pre-line !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+    margin: 0 !important;
+    line-height: 1.05rem !important;
 }
 
 /* Dá uma “respirada” entre os botões */
